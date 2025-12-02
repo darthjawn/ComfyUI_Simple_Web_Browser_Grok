@@ -13,10 +13,15 @@ app.registerExtension({
                 widgetDiv.style.display = "flex";
                 widgetDiv.style.flexDirection = "column";
                 widgetDiv.style.width = "100%";
+
+                widgetDiv.dataset.captureWheel = "true";
+                widgetDiv.addEventListener("wheel", (e) => {
+                    e.stopPropagation();
+                });
                 
-                const imageUrlWidget = this.addWidget("text", "image_url", "", () => {}, { multiline: true });
+                const imageUrlWidget = this.addWidget("hidden_text", "image_url", "", () => {}, { multiline: true });
                 imageUrlWidget.draw = function() {};
-                imageUrlWidget.computeSize = function() { return [0, -4]; };
+                imageUrlWidget.computeSize = function() { return [0, 0]; };
                 
                 this.addDOMWidget("browser", "div", widgetDiv);
             
@@ -64,13 +69,13 @@ app.registerExtension({
                         <button class="browser-go" style="background-color: #444; color: #fff; border: none; border-radius: 4px; cursor: pointer; padding: 0 10px; height: 30px;">Go</button>
                     </div>
                     <div class="browser-image-loader">
-                        <input type="text" class="browser-image-url" placeholder="Paste the image url here..." style="background-color: #222; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 5px;" />
+                        <input type="text" class="browser-image-url" placeholder="Paste image url OR paste image from clipboard" style="background-color: #222; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 5px;" />
                         <button class="browser-load-image-btn" style="background-color: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Loading pictures from url</button>
                         <span class="status-icon url-status">✓</span>
                         <button class="browser-photopea-import-btn" style="background-color: #17a2b8; color: #fff; border: none; border-radius: 4px; cursor: pointer;">From Photopea</button>
                         <span class="status-icon photopea-status">✓</span>
-                    </div>
-                    <iframe style="flex-grow: 1; border: none; width: 100%; height: 100%; background-color: #222;"></iframe>
+                        </div>
+                    <iframe style="flex-grow: 1; border: none; width: 100%; background-color: #222;"></iframe>
                 `;
                 
                 const urlInput = widgetDiv.querySelector(".browser-url-input");
@@ -118,6 +123,50 @@ app.registerExtension({
                         imageUrlWidget.value = imageUrl;
                         urlStatusIcon.style.display = "inline";
                         setTimeout(() => { urlStatusIcon.style.display = "none"; }, 2000);
+                    }
+                });
+
+                imageUrlInput.addEventListener("paste", async (e) => {
+                    if (!e.clipboardData || !e.clipboardData.files.length) {
+                        return;
+                    }
+
+                    const file = e.clipboardData.files[0];
+
+                    if (!file.type.startsWith("image/")) {
+                        return;
+                    }
+
+                    e.preventDefault();
+                    
+                    try {
+                        imageUrlInput.value = "Pasting image...";
+                        imageUrlInput.disabled = true;
+
+                        const formData = new FormData();
+                        const filename = `clipboard_paste_${Date.now()}.png`;
+                        formData.append('image', file, filename);
+                        
+                        const response = await api.fetchApi('/browser/upload_temp_image', { method: 'POST', body: formData });
+                        const result = await response.json();
+                        
+                        if (result.name) {
+                            imageUrlWidget.value = result.name;
+
+                            imageUrlInput.value = `Pasted: ${result.name}`;
+                            imageUrlInput.disabled = false;
+
+                            urlStatusIcon.style.display = "inline";
+                            setTimeout(() => { urlStatusIcon.style.display = "none"; }, 2000);
+
+                        } else {
+                            throw new Error("Upload failed, no filename returned.");
+                        }
+                    } catch (err) {
+                        console.error("Error pasting image:", err);
+                        alert("Failed to paste image. See console for details.");
+                        imageUrlInput.value = "";
+                        imageUrlInput.disabled = false;
                     }
                 });
 
@@ -279,7 +328,15 @@ app.registerExtension({
                     const minWidth = 700;
                     if (size[1] < minHeight) size[1] = minHeight;
                     if (size[0] < minWidth) size[0] = minWidth;
-                    widgetDiv.style.height = `${size[1] - 70}px`;
+                    
+                    let topOffset = widgetDiv.offsetTop;
+                    const approximateHeaderHeight = 50; 
+                    if (topOffset < 20) {
+                        topOffset += approximateHeaderHeight;
+                    }
+                    const bottomPadding = 20;
+                    const targetHeight = size[1] - topOffset - bottomPadding;
+                    widgetDiv.style.height = targetHeight + "px";
                 };
 
                 this.size = [900, 770];
@@ -292,6 +349,12 @@ app.registerExtension({
                     } catch (e) { console.error("Failed to load bookmarks:", e); }
                     setTimeout(() => { this.onResize(this.size); }, 1);
                 })();
+
+                requestAnimationFrame(() => {
+                    if (this.onResize) {
+                        this.onResize(this.size);
+                    }
+                });
                 
                 return r;
             };
